@@ -7,7 +7,7 @@
   // ---------- Ajustes ----------
   const DEFAULTS = {
     callsign: 'D-KPPA', onlyMine: true, mode: 'auto', localLang: 'es-ES', cloudLang: '', vad: -45,
-    openaiKey: '', sttModel: 'gpt-4o-transcribe', useLlm: false, anthropicKey: '', anthropicModel: 'claude-haiku-4-5', theme: 'night',
+    openaiKey: '', sttModel: 'gpt-4o-transcribe', useLlm: true, anthropicKey: '', anthropicModel: 'claude-haiku-4-5', theme: 'night',
   };
   let S = Object.assign({}, DEFAULTS);
   try { Object.assign(S, JSON.parse(localStorage.getItem('colacion.settings') || '{}')); } catch (e) {}
@@ -50,6 +50,7 @@
   const active = {}; // valores vigentes por clave
   let wakeLock = null;
 
+  function setEngineTag(t) { const el = $('engineTag'); if (el) el.textContent = t; }
   function setStatus(label, dotClass) { $('modeLabel').textContent = label; $('dot').className = 'dot ' + (dotClass || ''); }
 
   // ---------- Presentación ----------
@@ -117,27 +118,35 @@
     history.push(tx); showTransmission(tx); updateActive(res); renderHistory();
     log(`[${source}] ${text}`);
     if (S.useLlm && navigator.onLine && (S.anthropicKey || S.openaiKey)) {
+      setEngineTag('reglas · consultando LLM…');
       try {
-        const llm = await llmExtract(text, res.lang);
+        const prev = history.slice(-4, -1).map((h) => h.text);
+        const llm = await llmExtract(text, res.lang, prev);
         if (llm && Array.isArray(llm.items)) {
           const merged = mergeResults(res, llm);
-          tx.res = merged; showTransmission(tx); updateActive(merged); renderHistory();
+          tx.res = merged; tx.engine = 'llm';
+          if (history[history.length - 1] === tx) { showTransmission(tx); updateActive(merged); }
+          renderHistory();
+          setEngineTag(S.anthropicKey ? 'Claude' : 'GPT');
         }
-      } catch (e) { log('LLM: ' + e.message); }
-    }
+      } catch (e) { log('LLM: ' + e.message); setEngineTag('reglas (LLM falló)'); }
+    } else setEngineTag('reglas');
   }
+  // El LLM manda: sus items y su colación sustituyen a las reglas; las reglas solo rellenan huecos.
+  const CLR_KEYS = new Set(['startup', 'taxi', 'hold', 'lineup', 'enter', 'enterbt', 'backtrack', 'cross', 'takeoff', 'land', 'tng', 'vacate', 'join', 'extend', 'proceed', 'turnok', 'goaround', 'stop', 'route', 'report', 'other', 'app', 'contapp', 'lowpass', 'ident', 'orbit', 'intent', 'standby', 'goahead']);
   function mergeResults(rules, llm) {
     const out = Object.assign({}, rules);
-    const byKey = new Map(rules.items.map((i) => [i.key, i]));
+    const items = [];
     for (const it of llm.items) {
-      if (!it || !it.key) continue;
-      const base = byKey.get(it.key) || {};
-      byKey.set(it.key, Object.assign({ group: it.group || base.group || 'data', sev: base.sev || it.sev || 'ok' }, base, { label: (it.label || base.label || it.key).toUpperCase(), value: it.value != null ? String(it.value) : (base.value || ''), readback: it.readback || base.readback || '' }));
+      if (!it || !it.key || !(it.label || it.value)) continue;
+      const base = rules.items.find((r) => r.key === it.key) || {};
+      items.push({ key: it.key, group: CLR_KEYS.has(it.key) ? 'clr' : 'data', label: String(it.label || it.key).toUpperCase(), value: it.value != null ? String(it.value) : '', sev: it.sev || base.sev || 'ok' });
     }
-    out.items = [...byKey.values()].sort((a, b) => P.ORDER.indexOf(a.key) - P.ORDER.indexOf(b.key));
-    if (Array.isArray(llm.info) && llm.info.length) out.info = llm.info.map((i) => ({ key: i.key || 'info', label: String(i.label || '').toUpperCase(), value: String(i.value || '') }));
+    out.items = items.length ? items : rules.items;
+    if (Array.isArray(llm.info)) out.info = llm.info.map((i) => ({ key: i.key || 'info', label: String(i.label || '').toUpperCase(), value: String(i.value || '') }));
     if (llm.addressed && ['yes', 'no', 'unknown'].includes(llm.addressed)) out.addressed = llm.addressed;
-    out.readback = llm.readback || P.buildReadback(out.items, out.lang, S.callsign);
+    if (typeof llm.lang === 'string') out.lang = llm.lang;
+    out.readback = typeof llm.readback === 'string' ? llm.readback : rules.readback;
     return out;
   }
 
@@ -145,12 +154,14 @@
 {"lang":"es|en","addressed":"yes|no|unknown","items":[{"key":"startup|takeoff|land|tng|hold|lineup|enter|enterbt|taxi|cross|backtrack|vacate|join|extend|proceed|turnok|intent|report|goaround|stop|runway|altitude|level|heading|speed|squawk|qnh|qfe|freq|other","label":"TEXTO CORTO EN MAYÚSCULAS","value":"valor corto (23, 1018, 7000, 3500 ft, 180°, 118.5) o vacío","readback":"repetición literal de la instrucción del controlador (sin pasarla a primera persona)","sev":"go|warn|crit|ok"}],"info":[{"key":"wind|traffic|other","label":"VIENTO","value":"240° / 8 kt"}],"readback":"colación completa: repite literalmente las instrucciones del controlador en el mismo orden, sin viento ni recibido, y termina con el indicativo del piloto"}
 Reglas: "addressed" es yes si la transmisión va dirigida al indicativo del piloto (completo o abreviado, p. ej. Kilo Papa Papa Alfa / Papa Papa Alfa para D-KPPA), no si va dirigida a otro indicativo, unknown si no hay indicativo. Incluye en items solo lo que debe colacionarse (autorizaciones, pista, altitudes/niveles, rumbos, velocidad, código transpondedor, QNH/QFE, frecuencias, instrucciones de notificación). El viento y el tráfico van en info. Corrige errores evidentes del reconocedor (p. ej. "cune hache" = QNH, "escuok" = squawk). Fraseología habitual en aeródromos españoles (p. ej. León): "puesta en marcha aprobada", "pista en servicio 23", "autorizado a rodar punto de espera pista 23, vía calle C", "autorizado a entrar y backtrack pista 23", "aprobado viraje izquierda", "notifique alcanzando punto S1", "continúe ascenso para 5500 ft", "proceda para el campo", "entre en circuito de tráfico, notifique en viento en cola izquierda pista 23", "extienda viento en cola", "llame en base", "abandone por calle B", "continúe rodaje a plataforma". El viento puede venir compacto (24010KT) y el QNH como Q1024. El piloto colaciona repitiendo la instrucción en primera persona o tal cual ("Autorizado a despegar pista 23, notificaré punto S1") y termina con su indicativo; "recibido"/"copiado" no se colacionan. sev: crit para mantenga posición/pare/motor y al aire, go para autorizaciones de despegue/aterrizaje/aproximación, warn para alinee/retroceda/cruce, ok para el resto.`;
 
-  async function llmExtract(text, lang) {
-    const user = `Indicativo del piloto: ${S.callsign}\nTransmisión: "${text}"`;
+  async function llmExtract(text, lang, prev) {
+    const SYS = window.FRASEOLOGIA || LLM_SYSTEM;
+    const ctx = prev && prev.length ? `\nTransmisiones anteriores (solo contexto, NO las colaciones): ${prev.map((p) => '"' + p + '"').join(' | ')}` : '';
+    const user = `Indicativo del piloto: ${S.callsign} (abreviado: ${P.callsignVariants(S.callsign).join(' / ')})${ctx}\nTransmisión a colacionar: "${text}"\nResponde solo con el JSON.`;
     if (S.anthropicKey) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: S.anthropicModel || 'claude-haiku-4-5', max_tokens: 800, system: LLM_SYSTEM, messages: [{ role: 'user', content: user }] }),
+        body: JSON.stringify({ model: S.anthropicModel || 'claude-haiku-4-5', max_tokens: 800, temperature: 0, system: [{ type: 'text', text: SYS, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: user }] }),
       });
       if (!r.ok) throw new Error('Anthropic ' + r.status + ' ' + (await r.text()).slice(0, 200));
       const j = await r.json();
@@ -158,7 +169,7 @@ Reglas: "addressed" es yes si la transmisión va dirigida al indicativo del pilo
     }
     const r = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + S.openaiKey },
-      body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: LLM_SYSTEM }, { role: 'user', content: user }] }),
+      body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: SYS }, { role: 'user', content: user }] }),
     });
     if (!r.ok) throw new Error('OpenAI ' + r.status + ' ' + (await r.text()).slice(0, 200));
     const j = await r.json();

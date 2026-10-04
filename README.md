@@ -8,7 +8,8 @@ Web app (PWA) para iPhone que escucha la radio del avión y muestra en letras gr
 
 - `index.html` — pantalla y ajustes.
 - `app.js` — captura de audio, detección de transmisiones (squelch/VAD), reconocimiento local (Safari) o en nube (OpenAI), extracción opcional con LLM, pantalla.
-- `parser.js` — extractor de fraseología por reglas (ES/EN). Sin dependencias; se prueba con `node tests/parser.test.js`.
+- `parser.js` — extractor de fraseología por reglas (ES/EN). Sin dependencias; se prueba con `node tests/parser.test.js` y `node tests/leon.test.js`.
+- `fraseologia.js` — conocimiento para el LLM: reglas de colación del Doc 9432 OACI (§2.8.3) y ejemplos de León. Es el "manual" que lee Claude Haiku en cada transmisión (con caché de prompt).
 - `sw.js`, `manifest.webmanifest`, `icon-*.png` — para instalarla en la pantalla de inicio y que cargue sin cobertura.
 
 ## Publicarla (5 minutos)
@@ -25,7 +26,7 @@ Netlify Drop o Vercel funcionan igual (arrastrar la carpeta). Para desarrollo en
 ## Primer uso
 
 1. ⚙︎ Ajustes → **Indicativo** (por defecto D-KPPA).
-2. Pega tu **OpenAI API key** para el modo nube (transcripción con `gpt-4o-transcribe`; unos céntimos por hora de vuelo, solo se envía audio cuando hay una transmisión). Opcionalmente activa la extracción con LLM y pon una clave de Anthropic.
+2. Pega tu **OpenAI API key** para la transcripción en nube (`gpt-4o-transcribe`; unos céntimos por hora de vuelo, solo se envía audio cuando hay una transmisión) y tu **Anthropic API key** para que Claude Haiku decida la colación con el manual. Sin clave de Anthropic, la colación la deciden las reglas locales (menos fiables con fraseología no estándar).
 3. Pulsa **ESCUCHAR** y acepta el permiso de micrófono. Con datos móviles y clave usa la nube; sin datos pasa al reconocedor local del iPhone (solo un idioma a la vez, elegido en Ajustes).
 4. Prueba sin radio desde Ajustes → *Probar sin radio* (escribe una transmisión y pulsa Simular).
 

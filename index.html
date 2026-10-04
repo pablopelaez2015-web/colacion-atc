@@ -131,7 +131,7 @@ legend { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; colo
   <button class="bigbtn" id="startBtn">ESCUCHAR</button>
 
   <section class="card" id="nowCard">
-    <h2>Ahora <span class="badge hidden" id="addrBadge"></span><span class="time" id="nowTime"></span></h2>
+    <h2>Ahora <span class="badge hidden" id="addrBadge"></span><span class="note" id="engineTag" style="text-transform:none;letter-spacing:0"></span><span class="time" id="nowTime"></span></h2>
     <p class="transcript" id="transcript">Pulsa ESCUCHAR. Cada transmisión del controlador aparecerá aquí con los datos que debes colacionar en grande.</p>
     <div class="tiles" id="nowTiles"></div>
     <div class="info" id="nowInfo"></div>
@@ -182,7 +182,7 @@ legend { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; colo
       <div class="field"><label for="openaiKey">OpenAI API key (transcripción en nube)</label><input id="openaiKey" type="password" autocomplete="off" placeholder="sk-…"></div>
       <div class="field"><label for="sttModel">Modelo de transcripción</label>
         <select id="sttModel"><option value="gpt-4o-transcribe">gpt-4o-transcribe</option><option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe (más barato)</option><option value="whisper-1">whisper-1</option></select></div>
-      <div class="toggle"><input type="checkbox" id="useLlm"><label for="useLlm">Extraer datos con un LLM además de las reglas (más robusto con fraseología no estándar)</label></div>
+      <div class="toggle"><input type="checkbox" id="useLlm"><label for="useLlm">Decidir la colación con un LLM (Claude Haiku con el manual OACI y la fraseología de León). Las reglas locales se usan mientras responde o sin datos.</label></div>
       <div class="field"><label for="anthropicKey">Anthropic API key (extracción con Claude, opcional)</label><input id="anthropicKey" type="password" autocomplete="off" placeholder="sk-ant-…">
         <div class="help">Si está vacía y el LLM está activado, se usa la clave de OpenAI (gpt-4o-mini).</div></div>
       <div class="field"><label for="anthropicModel">Modelo Claude</label><input id="anthropicModel" placeholder="claude-haiku-4-5"></div>
@@ -191,7 +191,7 @@ legend { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; colo
     <fieldset>
       <legend>Probar sin radio</legend>
       <div class="field"><label for="simText">Escribe una transmisión y pulsa Simular</label>
-        <textarea id="simText" rows="2" placeholder="Papa Papa Alfa, pista 23, viento 240 grados 8 nudos, QNH 1018, autorizado a despegar"></textarea></div>
+        <textarea id="simText" rows="2" placeholder="Papa Papa Alfa, autorizado a despegar pista 23, viento 24010KT, aprobado viraje izquierda, notifique alcanzando punto S1"></textarea></div>
       <div class="row"><button class="iconbtn" id="simBtn">Simular</button><button class="iconbtn" id="clearBtn">Borrar historial</button></div>
     </fieldset>
 
@@ -202,6 +202,7 @@ legend { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; colo
 </div>
 
 <script src="parser.js"></script>
+<script src="fraseologia.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

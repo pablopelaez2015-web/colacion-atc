@@ -1,5 +1,5 @@
 /* sw.js — caché de la app para uso sin cobertura (las llamadas a APIs van siempre a red). */
-const CACHE = 'colacion-v1';
+const CACHE = 'colacion-v3';
 const SHELL = ['./', './index.html', './app.js', './parser.js', './manifest.webmanifest', './icon-180.png', './icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });

@@ -117,6 +117,9 @@
 
   function normalize(text) {
     let s = stripAccents(String(text || '').toLowerCase());
+    s = s.replace(/[º°]/g, ' grados ');
+    s = s.replace(/\b(\d{3})(\d{2})\s*(kt|kts|nudos|knots)\b/g, '$1 grados $2 $3'); // 24010KT -> 240 grados 10 kt
+    s = s.replace(/\bq\s*(\d{4})\b/g, 'qnh $1');     // Q1024 -> qnh 1024
     s = s.replace(/(\d)[,](\d)/g, '$1.$2');          // 118,5 -> 118.5
     s = s.replace(/\b1\.0(\d\d)\b/g, '10$1');         // 1.018 -> 1018 (QNH escrito con punto de millar)
     s = s.replace(/[¿?¡!;:"()]/g, ' ').replace(/[.,](?=\s|$)/g, ' , ').replace(/-/g, ' ');
@@ -193,50 +196,64 @@
     let m;
 
     // Pista(s)
-    const rwyRe = /\b(?:pista|runway|rwy)\s+(?:en\s+uso\s+|in\s+use\s+)?(\d{1,2})(?:\s+(izquierda|derecha|centro|central|left|right|center|centre))?\b/g;
+    const rwyRe = /\b(?:pista|runway|rwy|cabecera)\s+(?:en\s+uso\s+|en\s+servicio\s+|in\s+use\s+)?(\d{1,2})(?:\s+(izquierda|derecha|centro|central|left|right|center|centre))?\b/g;
     const runways = [];
     while ((m = rwyRe.exec(n))) { const r = m[1].padStart(2, '0') + (m[2] ? RWY_SIDE[m[2]] : ''); if (!runways.includes(r)) runways.push(r); }
     const rwyStr = runways.join(' / ');
 
     // Autorizaciones e instrucciones
     const C = (key, labelEs, labelEn, rbEs, rbEn, sev) => ({ key, label: es ? labelEs : labelEn, readback: es ? rbEs : rbEn, sev: sev || 'ok' });
-    const rw = rwyStr ? ' ' + rwyStr : '';
+    const rwWord = es ? (/\bcabecera\s+\d/.test(n) ? 'CABECERA' : 'PISTA') : 'RUNWAY';
+    const rw = rwyStr ? ' ' + rwWord + ' ' + rwyStr : '';
     const rwSp = rwyStr.replace(/(\d)(\d)/g, '$1 $2');
     const rwEs = rwyStr ? ' pista ' + rwSp : '', rwEn = rwyStr ? ' runway ' + rwSp : '';
-    const RW_KEYS = new Set(['takeoff', 'land', 'tng', 'enter', 'lineup', 'backtrack', 'cross', 'join', 'hold', 'taxi']);
+    const RW_KEYS = new Set(['takeoff', 'land', 'tng', 'enter', 'enterbt', 'lineup', 'backtrack', 'cross', 'join', 'hold', 'taxi', 'extend', 'proceed']);
     const rules = [
+      [/\bpuesta en marcha aprobada\b|\bstart ?up approved\b/, () => C('startup', 'PUESTA EN MARCHA APROBADA', 'START-UP APPROVED', 'puesta en marcha aprobada', 'start-up approved', 'go')],
+      [/\bautorizad[oa]\s+a\s+entrar\s+(?:en\s+(?:la\s+)?pista\s+)?y\s+(?:backtrack|retroceda|retroceder)\b/, () => C('enterbt', 'AUTORIZADO A ENTRAR Y BACKTRACK' + rw, 'CLEARED TO ENTER AND BACKTRACK' + rw, 'autorizado a entrar y backtrack pista' + (rwyStr ? ' ' + rwSp : ''), 'cleared to enter and backtrack runway' + (rwyStr ? ' ' + rwSp : ''), 'warn')],
+      [/\b(?:aprobado|autorizado)\s+viraje\s+(izquierda|derecha)\b/, (mm) => C('turnok', 'APROBADO VIRAJE ' + mm[1].toUpperCase(), 'TURN ' + mm[1].toUpperCase() + ' APPROVED', 'aprobado viraje ' + mm[1], 'turn ' + mm[1] + ' approved', 'ok')],
+      [/\b(?:me\s+)?confirm[ae]?\s+intenciones\b|\b(?:say|confirm)\s+intentions\b/, () => C('intent', 'CONFIRME INTENCIONES', 'SAY INTENTIONS', '', '', 'warn')],
+      [/\b(?:extienda|prolongue|extend)\s+(?:el\s+|la\s+)?(viento-en-cola|viento-cruzado|downwind|base)\s*(izquierda|derecha|left|right)?/, (mm) => { const leg = (mm[1] + (mm[2] ? ' ' + mm[2] : '')).replace(/-/g, ' '); return C('extend', 'EXTIENDA ' + leg.toUpperCase() + rw, 'EXTEND ' + leg.toUpperCase() + rw, 'extendere ' + leg + (rwyStr ? ' ' + rwSp : ''), 'extending ' + leg + (rwyStr ? ' ' + rwSp : ''), 'ok'); }],
+      [/\b(?:proceda|proceed)\s+((?:para|a|al|hacia|to|direct)\s+)?(.{3,50}?)(?=\s*(?:,|\bnotifique\b|\bllame\b|\breport\b|\bqnh\b|\bviento\b|$))/, (mm) => { const d = ((mm[1] || '') + mm[2]).replace(/-/g, ' ').trim(); return C('proceed', 'PROCEDA ' + d.toUpperCase(), 'PROCEED ' + d.toUpperCase(), 'procedo ' + d, 'proceeding ' + d, 'ok'); }],
+      [/\babandone\s+(?:la\s+pista\s+)?por\s+(.{2,25}?)(?=\s*(?:,|$|\bnotifique\b|\bcontacte\b))/, (mm) => { const d = mm[1].replace(/-/g, ' ').trim(); return C('vacate', 'ABANDONE POR ' + d.toUpperCase(), 'VACATE VIA ' + d.toUpperCase(), 'abandonare por ' + d, 'vacating via ' + d, 'ok'); }],
+      [/\badelante\b|\bgo ahead\b|\bpass your message\b/, () => C('goahead', 'ADELANTE', 'GO AHEAD', '', '', 'ok')],
       [/\b(?:cancele|cancelo|cancel)\b.*\b(?:despegue|takeoff)\b|\b(?:pare|deténgase|stop)\s+(?:inmediatamente|immediately)\b/, () => C('stop', 'PARE INMEDIATAMENTE', 'STOP IMMEDIATELY', 'paro', 'stopping', 'crit')],
       [/\bmotor-y-al-aire\b|\bgo-around\b|\bfrustre\b/, () => C('goaround', 'MOTOR Y AL AIRE', 'GO AROUND', 'motor y al aire', 'going around', 'crit')],
       [/\bautorizad[oa]\s+(?:a\s+|para\s+)?despeg(?:ar|ue)\b|\bcleared\s+(?:for\s+)?(?:immediate\s+)?takeoff\b/, () => C('takeoff', 'AUTORIZADO A DESPEGAR' + rw, 'CLEARED FOR TAKEOFF' + rw, 'autorizado a despegar' + rwEs, 'cleared for takeoff' + rwEn, 'go')],
       [/\bautorizad[oa]\s+(?:a\s+|para\s+)?aterriz(?:ar|aje)\b|\bcleared\s+to\s+land\b/, () => C('land', 'AUTORIZADO A ATERRIZAR' + rw, 'CLEARED TO LAND' + rw, 'autorizado a aterrizar' + rwEs, 'cleared to land' + rwEn, 'go')],
       [/\bautorizad[oa]\s+(?:a\s+|para\s+)?toque y despegue\b|\bcleared\s+(?:for\s+)?touch and go\b|\bcleared\s+(?:for\s+)?(?:the\s+)?option\b/, () => C('tng', 'AUTORIZADO TOQUE Y DESPEGUE' + rw, 'CLEARED TOUCH AND GO' + rw, 'autorizado toque y despegue' + rwEs, 'cleared touch and go' + rwEn, 'go')],
       [/\bautorizad[oa]\s+(?:a\s+)?(?:baja\s+)?pasada\b|\bcleared\s+(?:for\s+)?low\s+(?:pass|approach)\b/, () => C('lowpass', 'AUTORIZADO PASADA BAJA' + rw, 'CLEARED LOW PASS' + rw, 'autorizado pasada baja', 'cleared low pass', 'go')],
-      [/\bautorizad[oa]\s+(?:a\s+)?(?:entrar\s+(?:en\s+)?(?:la\s+)?pista|ocupar\s+(?:la\s+)?pista)\b|\bcleared\s+to\s+enter\s+(?:the\s+)?runway\b/, () => C('enter', 'AUTORIZADO A ENTRAR EN PISTA' + rw, 'CLEARED TO ENTER RUNWAY' + rw, 'autorizado a entrar en pista' + (rwyStr ? ' ' + rwSp : ''), 'cleared to enter runway' + (rwyStr ? ' ' + rwSp : ''), 'go')],
+      [/\bautorizad[oa]\s+(?:a\s+)?(?:entrar\s+(?:en\s+)?(?:la\s+)?(?:pista|cabecera)|ocupar\s+(?:la\s+)?pista)\b|\bcleared\s+to\s+enter\s+(?:the\s+)?runway\b/, () => C('enter', 'AUTORIZADO A ENTRAR' + (rwyStr ? rw : ' EN PISTA'), 'CLEARED TO ENTER' + (rwyStr ? rw : ' RUNWAY'), 'autorizado a entrar en pista' + (rwyStr ? ' ' + rwSp : ''), 'cleared to enter runway' + (rwyStr ? ' ' + rwSp : ''), 'go')],
       [/\b(?:alinee|alineese|alinie|entre y mantenga|line-up)\b/, () => C('lineup', 'ALINEE Y MANTENGA' + rw, 'LINE UP AND WAIT' + rw, 'alineo y mantengo' + rwEs, 'lining up and waiting' + rwEn, 'warn')],
       [/\bmantenga\s+(?:la\s+)?posicion\b|\bhold\s+position\b/, () => C('hold', 'MANTENGA POSICIÓN', 'HOLD POSITION', 'mantengo posicion', 'holding position', 'crit')],
-      [/\bhold\s+short\b|\bmantenga\s+corto\b|\bmantenga\s+antes\s+de\b|\bmantenga\s+fuera\s+de\s+(?:la\s+)?pista\b/, () => C('hold', 'MANTENGA CORTO DE PISTA' + rw, 'HOLD SHORT RUNWAY' + rw, 'mantengo corto de pista' + (rwyStr ? ' ' + rwSp : ''), 'holding short runway' + (rwyStr ? ' ' + rwSp : ''), 'crit')],
-      [/\bretroceda\b|\bbacktrack\b/, () => C('backtrack', 'RETROCEDA POR PISTA' + rw, 'BACKTRACK RUNWAY' + rw, 'retrocedo por pista' + (rwyStr ? ' ' + rwSp : ''), 'backtrack runway' + (rwyStr ? ' ' + rwSp : ''), 'warn')],
-      [/\bcruce\s+(?:la\s+)?pista\b|\bcross\s+runway\b/, () => C('cross', 'CRUCE PISTA' + rw, 'CROSS RUNWAY' + rw, 'cruzo pista' + (rwyStr ? ' ' + rwSp : ''), 'crossing runway' + (rwyStr ? ' ' + rwSp : ''), 'warn')],
+      [/\bhold\s+short\b|\bmantenga\s+corto\b|\bmantenga\s+antes\s+de\b|\bmantenga\s+fuera\s+de\s+(?:la\s+)?pista\b/, () => C('hold', 'MANTENGA CORTO DE' + (rwyStr ? rw : ' PISTA'), 'HOLD SHORT' + (rwyStr ? rw : ' OF RUNWAY'), 'mantengo corto de pista' + (rwyStr ? ' ' + rwSp : ''), 'holding short runway' + (rwyStr ? ' ' + rwSp : ''), 'crit')],
+      [/\bretroceda\b|\bbacktrack\b/, () => C('backtrack', 'RETROCEDA POR' + (rwyStr ? rw : ' PISTA'), 'BACKTRACK' + (rwyStr ? rw : ' RUNWAY'), 'retrocedo por pista' + (rwyStr ? ' ' + rwSp : ''), 'backtrack runway' + (rwyStr ? ' ' + rwSp : ''), 'warn')],
+      [/\bcruce\s+(?:la\s+)?pista\b|\bcross\s+runway\b/, () => C('cross', 'CRUCE' + (rwyStr ? rw : ' PISTA'), 'CROSS' + (rwyStr ? rw : ' RUNWAY'), 'cruzo pista' + (rwyStr ? ' ' + rwSp : ''), 'crossing runway' + (rwyStr ? ' ' + rwSp : ''), 'warn')],
       [/\b(?:abandone|libere|desaloje)\s+(?:la\s+)?pista\b|\bvacate\b/, () => C('vacate', 'ABANDONE PISTA', 'VACATE RUNWAY', 'abandono pista', 'vacating', 'ok')],
-      [/\b(?:ruede|rodar|taxi)\b\s*((?:al|a|hasta|via|por|to|hacia|en)\s+)?(.{3,70}?)(?=\s*(?:,|\bqnh\b|\bviento\b|\bwind\b|\bresponda\b|\bsquawk\b|\bnotifique\b|\breport\b|\bcontact|\bmantenga\b|\bhold\b|$))/, (mm) => { const prep = (mm[1] || '').trim(); const dest = ((prep ? prep + ' ' : '') + mm[2]).replace(/-/g, ' ').trim(); return C('taxi', 'RUEDE ' + dest.toUpperCase(), 'TAXI ' + dest.toUpperCase(), 'ruedo ' + dest, 'taxi ' + dest, 'ok'); }],
-      [/\b(?:incorporese|incorpore|entre|unase|join)\s+(?:en\s+|el\s+|al\s+|a\s+|the\s+)?(?:circuito\s+(?:de\s+)?(?:trafico\s+)?)?(?:en\s+|por\s+|via\s+)?(viento-en-cola|viento-cruzado|base|corta-final|final|(?:left|right)\s+(?:downwind|base)|downwind|overhead)\s*(izquierda|derecha|left|right)?(?:\s+pista\s+\d{1,2})?/, (mm) => { const leg = (mm[1] + (mm[2] ? ' ' + mm[2] : '')).replace(/-/g, ' '); return C('join', 'INCORPÓRESE ' + leg.toUpperCase() + rw, 'JOIN ' + leg.toUpperCase() + rw, 'me incorporo ' + leg + rwEs, 'joining ' + leg + rwEn, 'ok'); }],
-      [/\b(?:notifique|reporte|report)\s+(.{2,40}?)(?=\s*(?:,|\bqnh\b|\bviento\b|\bwind\b|\bresponda\b|\bsquawk\b|\bcontact|\bpista\b|\brunway\b|$))/, (mm) => { const w = mm[1].replace(/-/g, ' ').trim(); return C('report', 'NOTIFIQUE ' + w.toUpperCase(), 'REPORT ' + w.toUpperCase(), 'notificare ' + w, 'wilco, report ' + w, 'ok'); }],
+      [/\b(autorizad[oa]\s+a\s+rodar|continue\s+rodaje|ruede|rodar|rodaje|taxi)\b\s*((?:al|a|hasta|via|por|to|hacia|en)\s+)?(.{3,90}?)(?=\s*(?:,(?!\s*(?:via|calle|por|taxiway)\b)|\bqnh\b|\bviento\s+(?:\d|calma|variable)|\bwind\b|\bresponda\b|\bsquawk\b|\bnotifique\b|\breport\b|\bcontact|\bmantenga\b|\bhold\b|$))/, (mm) => { const prep = (mm[2] || '').trim(); const dest = ((prep ? prep + ' ' : '') + mm[3]).replace(/-/g, ' ').replace(/\s*,\s*/g, ', ').trim(); const auth = /autorizad/.test(mm[1]); const cont = /continue/.test(mm[1]); const lbl = auth ? 'AUTORIZADO A RODAR ' : cont ? 'CONTINÚE RODAJE ' : 'RUEDE '; const rb = auth ? 'autorizado a rodar ' : cont ? 'continuo rodaje ' : 'ruedo '; return C('taxi', lbl + dest.toUpperCase(), (auth ? 'CLEARED TO TAXI ' : 'TAXI ') + dest.toUpperCase(), rb + dest, 'taxi ' + dest, 'ok'); }],
+      [/\b(?:incorporese|incorpore|entre|unase|join)\s+(?:en\s+|el\s+|al\s+|a\s+|the\s+)?(?:(circuito)\s+(?:de\s+)?(?:trafico\s+)?)?(?:en\s+|por\s+|via\s+)?(viento-en-cola|viento-cruzado|base|corta-final|final|(?:left|right)\s+(?:downwind|base)|downwind|overhead)?\s*(izquierda|derecha|left|right)?(?:\s+pista\s+\d{1,2})?/, (mm) => { if (!mm[1] && !mm[2]) return null; const leg = mm[2] ? (mm[2] + (mm[3] ? ' ' + mm[3] : '')).replace(/-/g, ' ') : (es ? 'en circuito de trafico' : 'the circuit'); return C('join', (mm[2] ? 'INCORPÓRESE ' : 'ENTRE ') + leg.toUpperCase() + rw, 'JOIN ' + leg.toUpperCase() + rw, (mm[2] ? 'me incorporo ' : 'entrare ') + leg + rwEs, 'joining ' + leg + rwEn, 'ok'); }],
+      [/\b(notifique|reporte|report|llame)\s+(?:o\s+llame\s+)?(.{2,45}?)(?=\s*(?:,|\.|\bqnh\b|\bviento\s+(?:\d|calma|variable)|\bwind\b|\bresponda\b|\bsquawk\b|\bcontact|\bpista\b|\brunway\b|\bme confirm|$))/, (mm) => { if (mm[1] === 'llame' && /\b(?:con\s+)?[a-z ]+\s+(?:en\s+)?1[1-3]\d\b/.test(mm[2])) return null; const w = mm[2].replace(/-/g, ' ').trim(); const llame = mm[1] === 'llame'; return C('report', (llame ? 'LLAME ' : 'NOTIFIQUE ') + w.toUpperCase(), 'REPORT ' + w.toUpperCase(), (llame ? 'llamare ' : 'notificare ') + w, 'wilco, report ' + w, 'ok'); }],
       [/\b(?:continue|continua)\s+(?:la\s+)?(?:aproximacion|approach)\b/, () => C('contapp', 'CONTINÚE APROXIMACIÓN', 'CONTINUE APPROACH', 'continuo aproximacion', 'continuing approach', 'ok')],
       [/\bautorizad[oa]\s+(?:a\s+|para\s+)?(?:la\s+)?aproximacion\b|\bcleared\s+(?:for\s+)?(?:the\s+)?(?:\w+\s+)?approach\b/, () => C('app', 'AUTORIZADO APROXIMACIÓN', 'CLEARED APPROACH', 'autorizado aproximacion', 'cleared approach', 'go')],
-      [/\b(?:espere|stand ?by|standby)\b/, () => C('standby', 'ESPERE', 'STAND BY', '', '', 'ok')],
+      [/\bespere\s*(?:,|\.|$)|\bstand ?by\b/, () => C('standby', 'ESPERE', 'STAND BY', '', '', 'ok')],
       [/\bsquawk\s+ident\b|\bresponda\s+ident\b|\bpulse\s+ident\b/, () => C('ident', 'IDENT', 'IDENT', 'ident', 'ident', 'ok')],
       [/\b(?:orbite|orbit)\s*(izquierda|derecha|left|right)?/, (mm) => C('orbit', 'ORBITE ' + (mm[1] || '').toUpperCase(), 'ORBIT ' + (mm[1] || '').toUpperCase(), 'orbito ' + (mm[1] || ''), 'orbiting ' + (mm[1] || ''), 'warn')],
     ];
     const clearances = [];
-    for (const [re, mk] of rules) { const mm = re.exec(n); if (mm) clearances.push(mk(mm)); }
+    for (const [re, mk] of rules) { const mm = re.exec(n); if (mm) { const c = mk(mm); if (c) clearances.push(c); } }
+    if (clearances.some((c) => c.key === 'enterbt')) { for (let i = clearances.length - 1; i >= 0; i--) if (clearances[i].key === 'enter' || clearances[i].key === 'backtrack') clearances.splice(i, 1); }
+    if (clearances.filter((c) => c.key === 'vacate').length > 1) { const i = clearances.findIndex((c) => c.key === 'vacate' && !/POR|VIA/.test(c.label)); if (i >= 0) clearances.splice(i, 1); }
     for (const c of clearances) push(items, { key: c.key, group: 'clr', label: c.label.replace(/\s+$/, ''), value: '', readback: c.readback, sev: c.sev });
 
     // Altitud / nivel
-    const altRe = /\b(suba|ascienda|ascender|descienda|descender|mantenga|climb|descend|maintain)?\b[^,]{0,25}?\b(\d{3,5})\s*(?:pies|feet|ft)\b(?:\s*(?:qnh|on qnh)\s*(\d{4}))?/;
-    if ((m = altRe.exec(n))) {
+    const altRe = /\b(suba|ascienda|ascender|ascenso|descienda|descender|descenso|mantenga|climb|descend|maintain)?\b[^,]{0,25}?\b(\d{3,5})\s*(?:pies|feet|ft)\b(?:\s*(?:qnh|on qnh)\s*(\d{4}))?/;
+    const altVerbRe = /\b(suba|ascienda|ascender|ascenso|descienda|descender|descenso|mantenga|climb|descend|maintain)\b[^,]{0,25}?\b(\d{3,5})\s*(?:pies|feet|ft)\b/;
+    if ((m = altVerbRe.exec(n) || altRe.exec(n))) {
       const verb = m[1] || '';
       let vEs = 'ALTITUD', vEn = 'ALTITUDE', rbEs = 'altitud', rbEn = 'altitude';
-      if (/suba|asc|climb/.test(verb)) { vEs = 'SUBA A'; vEn = 'CLIMB'; rbEs = 'subo a'; rbEn = 'climb'; }
+      if (/ascenso/.test(verb)) { vEs = 'ASCENSO PARA'; vEn = 'CLIMB'; rbEs = 'en ascenso para'; rbEn = 'climb'; }
+      else if (/descenso/.test(verb)) { vEs = 'DESCENSO PARA'; vEn = 'DESCEND'; rbEs = 'en descenso para'; rbEn = 'descend'; }
+      else if (/suba|asc|climb/.test(verb)) { vEs = 'SUBA A'; vEn = 'CLIMB'; rbEs = 'subo a'; rbEn = 'climb'; }
       else if (/desc/.test(verb)) { vEs = 'DESCIENDA A'; vEn = 'DESCEND'; rbEs = 'desciendo a'; rbEn = 'descend'; }
       else if (/mantenga|maintain/.test(verb)) { vEs = 'MANTENGA'; vEn = 'MAINTAIN'; rbEs = 'mantengo'; rbEn = 'maintain'; }
       push(items, { key: 'altitude', group: 'nav', label: es ? vEs : vEn, value: m[2] + ' ft', readback: (es ? rbEs : rbEn) + ' ' + m[2] + (es ? ' pies' : ' feet'), sev: 'ok' });
@@ -310,15 +327,17 @@
     return { lang, addressed, items, info, readback, runway: rwyStr, normalized: n };
   }
 
-  const ORDER = ['stop', 'goaround', 'hold', 'takeoff', 'land', 'tng', 'lowpass', 'enter', 'lineup', 'backtrack', 'cross', 'vacate', 'taxi', 'join', 'app', 'contapp', 'runway', 'altitude', 'level', 'heading', 'speed', 'squawk', 'qnh', 'qfe', 'freq', 'report', 'ident', 'orbit', 'standby'];
+  const ORDER = ['stop', 'goaround', 'hold', 'startup', 'takeoff', 'enterbt', 'turnok', 'extend', 'proceed', 'land', 'tng', 'lowpass', 'enter', 'lineup', 'backtrack', 'cross', 'vacate', 'taxi', 'join', 'app', 'contapp', 'runway', 'altitude', 'level', 'heading', 'speed', 'squawk', 'qnh', 'qfe', 'freq', 'report', 'ident', 'orbit', 'standby'];
   function spellCallsign(callsign, lang) {
     const letters = String(callsign || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     const names = { A: 'Alfa', B: 'Bravo', C: 'Charlie', D: 'Delta', E: 'Echo', F: 'Foxtrot', G: 'Golf', H: 'Hotel', I: 'India', J: 'Juliett', K: 'Kilo', L: 'Lima', M: 'Mike', N: 'November', O: 'Oscar', P: 'Papa', Q: 'Quebec', R: 'Romeo', S: 'Sierra', T: 'Tango', U: 'Uniform', V: 'Victor', W: 'Whiskey', X: 'X-ray', Y: 'Yankee', Z: 'Zulu' };
     return letters.split('').map((c) => names[c] || c).join(' ');
   }
   function buildReadback(items, lang, callsign) {
-    const sorted = [...items].filter((i) => i.readback).sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
-    const parts = sorted.map((i) => i.readback);
+    // Colación literal: se repite la instrucción tal como la dice el controlador (etiqueta + valor), en el orden recibido.
+    const NO_RB = new Set(['goahead', 'intent', 'standby']);
+    const sorted = [...items].filter((i) => !NO_RB.has(i.key) && (i.label || i.value)).sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
+    const parts = sorted.map((i) => ((i.label || '') + ' ' + (i.value || '')).trim().toLowerCase().replace(/\s+/g, ' '));
     if (!parts.length) return '';
     let s = parts.join(', ');
     s = s.charAt(0).toUpperCase() + s.slice(1);

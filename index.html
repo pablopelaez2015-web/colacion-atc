@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Colación">
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<title>Colación ATC</title>
+<style>
+/* Layout: una pantalla de cabina — barra de estado fija arriba, panel de "ahora" grande, datos vigentes en rejilla, historial plegado. */
+:root {
+  --bg: #0b0f14; --panel: #121a23; --panel-2: #0f151c; --line: #24303d;
+  --fg: #f2f5f8; --muted: #8a9bb0; --accent: #38bdf8;
+  --go: #22c55e; --warn: #f59e0b; --crit: #ef4444; --mine: #22c55e; --other: #64748b;
+  --font: -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+:root[data-theme="day"] {
+  --bg: #ffffff; --panel: #f3f5f7; --panel-2: #e9edf1; --line: #c9d2dc;
+  --fg: #05080c; --muted: #46556a; --accent: #0369a1;
+  --go: #15803d; --warn: #b45309; --crit: #b91c1c; --mine: #15803d; --other: #64748b;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 16px; line-height: 1.3; -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+button { font: inherit; color: inherit; }
+.hidden { display: none !important; }
+
+header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px; display: flex; align-items: center; gap: 10px; }
+.brand { font-weight: 700; letter-spacing: .04em; font-size: 15px; }
+.status { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--other); flex: none; }
+.dot.on { background: var(--go); box-shadow: 0 0 8px var(--go); }
+.dot.busy { background: var(--warn); }
+.meter { flex: 1; height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; min-width: 40px; max-width: 140px; }
+.meter > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .08s linear; }
+.meter.hot > i { background: var(--go); }
+.iconbtn { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 14px; cursor: pointer; }
+
+main { padding: 12px 12px calc(env(safe-area-inset-bottom, 0px) + 24px); display: flex; flex-direction: column; gap: 12px; max-width: 900px; margin: 0 auto; }
+
+.bigbtn { width: 100%; padding: 18px; border-radius: 14px; border: none; font-size: 22px; font-weight: 700; letter-spacing: .04em; background: var(--go); color: #04120a; cursor: pointer; }
+.bigbtn.stop { background: var(--crit); color: #fff; }
+.bigbtn:disabled { opacity: .5; }
+
+section.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
+.card h2 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.card h2 .time { margin-left: auto; font-family: var(--mono); letter-spacing: 0; text-transform: none; }
+
+.badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.badge.yes { background: var(--mine); color: #04120a; }
+.badge.no { background: var(--other); color: #fff; }
+.badge.unknown { background: var(--warn); color: #1a1000; }
+
+.transcript { font-size: 17px; color: var(--fg); margin: 0 0 10px; }
+.transcript.interim { color: var(--muted); font-style: italic; }
+.transcript.other { color: var(--muted); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.tile { background: var(--panel-2); border-radius: 12px; padding: 10px 12px; border-left: 6px solid var(--accent); min-width: 0; }
+.tile .l { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
+.tile .v { font-size: 44px; font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tile .v.txt { font-size: 24px; }
+.tile.go { border-color: var(--go); } .tile.go .l { color: var(--go); }
+.tile.warn { border-color: var(--warn); } .tile.warn .l { color: var(--warn); }
+.tile.crit { border-color: var(--crit); background: color-mix(in srgb, var(--crit) 18%, var(--panel-2)); } .tile.crit .l { color: var(--crit); }
+.tile.clr { grid-column: 1 / -1; }
+.tile.clr .v { font-size: 36px; }
+.tile.stale { opacity: .55; }
+.tile.new { animation: pop .5s ease-out; }
+@keyframes pop { from { transform: scale(.96); filter: brightness(1.6); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .tile.new { animation: none; } }
+
+.readback { margin-top: 10px; padding: 12px; border-radius: 12px; background: var(--panel-2); font-size: 26px; font-weight: 700; line-height: 1.25; }
+.readback small { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+
+.info { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.info span { background: var(--panel-2); border-radius: 8px; padding: 6px 10px; font-size: 15px; }
+.info span b { color: var(--muted); font-size: 11px; letter-spacing: .08em; margin-right: 6px; }
+
+.empty { color: var(--muted); font-size: 15px; }
+
+details summary { cursor: pointer; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
+.hist { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.hist li { display: flex; gap: 8px; align-items: baseline; padding: 8px 10px; background: var(--panel-2); border-radius: 8px; cursor: pointer; font-size: 14px; }
+.hist li time { font-family: var(--mono); color: var(--muted); font-size: 12px; flex: none; }
+.hist li .b { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--other); }
+.hist li.yes .b { background: var(--mine); }
+.hist li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+/* Ajustes */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
+.sheet { background: var(--bg); width: 100%; max-width: 640px; max-height: 92%; overflow: auto; border-radius: 18px 18px 0 0; padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 16px); border-top: 1px solid var(--line); }
+.sheet h3 { margin: 0 0 12px; font-size: 18px; display: flex; align-items: center; }
+.sheet h3 button { margin-left: auto; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.field input, .field select, .field textarea { font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); width: 100%; }
+.field .help { font-size: 12px; color: var(--muted); }
+.row { display: flex; gap: 10px; align-items: center; }
+.row > * { flex: 1; }
+.toggle { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.toggle input { width: 22px; height: 22px; }
+fieldset { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0 0 14px; }
+legend { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 0 6px; }
+.note { font-size: 12px; color: var(--muted); }
+.warnbox { background: color-mix(in srgb, var(--warn) 18%, var(--panel)); border: 1px solid var(--warn); border-radius: 10px; padding: 10px; font-size: 13px; }
+.log { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: pre-wrap; max-height: 120px; overflow: auto; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">COLACIÓN</div>
+  <div class="status">
+    <span class="dot" id="dot"></span>
+    <span id="modeLabel">Parado</span>
+    <div class="meter" id="meter"><i></i></div>
+  </div>
+  <button class="iconbtn" id="themeBtn" title="Día / noche" aria-label="Cambiar tema">☀︎</button>
+  <button class="iconbtn" id="settingsBtn" aria-label="Ajustes">⚙︎</button>
+</header>
+
+<main>
+  <button class="bigbtn" id="startBtn">ESCUCHAR</button>
+
+  <section class="card" id="nowCard">
+    <h2>Ahora <span class="badge hidden" id="addrBadge"></span><span class="time" id="nowTime"></span></h2>
+    <p class="transcript" id="transcript">Pulsa ESCUCHAR. Cada transmisión del controlador aparecerá aquí con los datos que debes colacionar en grande.</p>
+    <div class="tiles" id="nowTiles"></div>
+    <div class="info" id="nowInfo"></div>
+    <div class="readback hidden" id="readback"><small>Colación sugerida</small><span id="readbackText"></span></div>
+  </section>
+
+  <section class="card">
+    <h2>Vigente <span class="note" style="text-transform:none;letter-spacing:0">últimos valores recibidos</span></h2>
+    <div class="tiles" id="activeTiles"><div class="empty">Sin datos todavía.</div></div>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>Historial de transmisiones</summary>
+      <ul class="hist" id="hist"></ul>
+    </details>
+  </section>
+
+  <p class="note">Ayuda de escucha, no un sustituto de la colación. El reconocimiento de voz puede equivocarse: verifica siempre con lo que has oído y, ante la duda, pide al controlador que repita ("repita" / "say again").</p>
+</main>
+
+<div class="modal hidden" id="settings">
+  <div class="sheet">
+    <h3>Ajustes <button class="iconbtn" id="closeSettings">Cerrar</button></h3>
+
+    <fieldset>
+      <legend>Aeronave</legend>
+      <div class="field"><label for="callsign">Indicativo</label><input id="callsign" placeholder="D-KPPA" autocapitalize="characters">
+        <div class="help">Se usa para marcar las transmisiones dirigidas a ti (completo o abreviado: Kilo Papa Papa Alfa / Papa Papa Alfa) y para cerrar la colación sugerida.</div></div>
+      <div class="toggle"><input type="checkbox" id="onlyMine"><label for="onlyMine">Atenuar transmisiones para otros tráficos</label></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Reconocimiento</legend>
+      <div class="field"><label for="mode">Modo</label>
+        <select id="mode"><option value="auto">Híbrido (nube si hay datos, si no local)</option><option value="cloud">Nube (OpenAI)</option><option value="local">Local (reconocedor del iPhone)</option></select></div>
+      <div class="field"><label for="localLang">Idioma del reconocedor local</label>
+        <select id="localLang"><option value="es-ES">Español (es-ES)</option><option value="en-GB">English (en-GB)</option><option value="en-US">English (en-US)</option></select>
+        <div class="help">El reconocedor local de Safari solo escucha un idioma a la vez. En modo nube se detecta automáticamente.</div></div>
+      <div class="field"><label for="cloudLang">Idioma en modo nube</label>
+        <select id="cloudLang"><option value="">Automático (ES/EN)</option><option value="es">Español</option><option value="en">English</option></select></div>
+      <div class="field"><label for="vad">Umbral de squelch (VAD): <span id="vadVal"></span> dB</label><input type="range" id="vad" min="-70" max="-20" step="1">
+        <div class="help">Nivel a partir del cual se considera que hay una transmisión. Con el cable de audio del casco, empieza en −45 dB y baja el valor si se pierden transmisiones; súbelo si el ruido de motor dispara grabaciones vacías. La barra de la cabecera se pone verde cuando se supera.</div></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Claves API (se guardan solo en este dispositivo)</legend>
+      <div class="field"><label for="openaiKey">OpenAI API key (transcripción en nube)</label><input id="openaiKey" type="password" autocomplete="off" placeholder="sk-…"></div>
+      <div class="field"><label for="sttModel">Modelo de transcripción</label>
+        <select id="sttModel"><option value="gpt-4o-transcribe">gpt-4o-transcribe</option><option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe (más barato)</option><option value="whisper-1">whisper-1</option></select></div>
+      <div class="toggle"><input type="checkbox" id="useLlm"><label for="useLlm">Extraer datos con un LLM además de las reglas (más robusto con fraseología no estándar)</label></div>
+      <div class="field"><label for="anthropicKey">Anthropic API key (extracción con Claude, opcional)</label><input id="anthropicKey" type="password" autocomplete="off" placeholder="sk-ant-…">
+        <div class="help">Si está vacía y el LLM está activado, se usa la clave de OpenAI (gpt-4o-mini).</div></div>
+      <div class="field"><label for="anthropicModel">Modelo Claude</label><input id="anthropicModel" placeholder="claude-haiku-4-5"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Probar sin radio</legend>
+      <div class="field"><label for="simText">Escribe una transmisión y pulsa Simular</label>
+        <textarea id="simText" rows="2" placeholder="Papa Papa Alfa, pista 23, viento 240 grados 8 nudos, QNH 1018, autorizado a despegar"></textarea></div>
+      <div class="row"><button class="iconbtn" id="simBtn">Simular</button><button class="iconbtn" id="clearBtn">Borrar historial</button></div>
+    </fieldset>
+
+    <div class="warnbox">Para captar al controlador el iPhone debe recibir el audio del intercom/radio (cable de grabación desde el casco o el panel, o un transmisor Bluetooth en la salida de audio). El Bluetooth del propio casco (Bose/Lightspeed) solo envía al teléfono tu micrófono, no la radio.</div>
+    <p class="note" style="margin-top:12px">Registro técnico</p>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script src="parser.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
